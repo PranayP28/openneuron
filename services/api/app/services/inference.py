@@ -1,49 +1,81 @@
+import logging
+import re
+from typing import Optional
+
 import ollama
-from typing import Optional, Dict, Any
+
 from services.api.app.config.settings import settings
+
+logger = logging.getLogger(__name__)
+
+
+class InferenceError(RuntimeError):
+    """Raised when the local model cannot produce a response."""
+
 
 class InferenceClient:
     """Interface for Ollama inference to allow for easy mocking in tests."""
 
-    def generate(self, prompt: str, system_prompt: Optional[str] = None) -> str:
-        """Generates a response from the local Gemma model."""
-        full_prompt = prompt
-        if system_prompt:
-            full_prompt = f"System: {system_prompt}\n\nUser: {prompt}\n\nAssistant:"
+    def __init__(self):
+        self._client = ollama.Client(host=settings.OLLAMA_BASE_URL, timeout=settings.LLM_TIMEOUT_SECONDS)
 
+    def _options(self, max_tokens: Optional[int] = None) -> dict:
+        return {
+            "temperature": settings.LLM_TEMPERATURE,
+            "seed": settings.LLM_SEED,
+            "num_ctx": settings.LLM_CONTEXT_WINDOW,
+            "num_predict": max_tokens or settings.LLM_MAX_TOKENS,
+        }
+
+    def generate(self, prompt: str, system_prompt: Optional[str] = None, max_tokens: Optional[int] = None) -> str:
+        """Generates a response from the local Gemma model."""
         try:
-            # Use ollama.generate directly
-            response = ollama.generate(
+            response = self._client.generate(
                 model=settings.OLLAMA_MODEL,
-                prompt=full_prompt,
-                options={
-                    "temperature": settings.LLM_TEMPERATURE,
-                    "seed": settings.LLM_SEED,
-                    "num_ctx": settings.LLM_CONTEXT_WINDOW,
-                }
+                prompt=prompt,
+                system=system_prompt or None,
+                options=self._options(max_tokens),
+                keep_alive=settings.LLM_KEEP_ALIVE,
             )
-            return response['response'].strip()
+            return response["response"].strip()
         except Exception as e:
-            print(f"Inference error: {str(e)}")
-            raise
+            logger.error("Inference error: %s", e)
+            raise InferenceError(
+                f"Local model '{settings.OLLAMA_MODEL}' is unavailable at {settings.OLLAMA_BASE_URL}: {e}"
+            ) from e
+
+    def warmup(self) -> None:
+        """Loads the model into memory so the first real request is not slowed by a cold start."""
+        self._client.generate(
+            model=settings.OLLAMA_MODEL,
+            prompt="",
+            keep_alive=settings.LLM_KEEP_ALIVE,
+        )
+
 
 class MockInferenceClient:
     """Mock client for unit tests to avoid needing Ollama running."""
 
-    def generate(self, prompt: str, system_prompt: Optional[str] = None) -> str:
+    def generate(self, prompt: str, system_prompt: Optional[str] = None, max_tokens: Optional[int] = None) -> str:
+        lowered = prompt.lower()
         # Simulate legal doc classification
-        if "classify" in prompt.lower() or "category" in prompt.lower():
-            # Return non_legal if specifically mentioning apples or weather
-            if "apples" in prompt.lower() or "weather" in prompt.lower():
+        if "classify" in lowered or "category" in lowered:
+            document = lowered.split("document text:")[-1]
+            if "apples" in document or "weather" in document:
                 return "non_legal"
-            # Otherwise, if it looks like a legal doc, return rental
-            if any(word in prompt.lower() for word in ["agreement", "lease", "contract", "rental"]):
+            if any(word in document for word in ["agreement", "lease", "contract", "rental"]):
                 return "rental"
             return "non_legal"
 
-        return "MOCK_RESPONSE: This is a simulated response for testing purposes."
+        # Echo the first retrieved sentence so the response stays grounded in the document.
+        excerpt = ""
+        match = re.search(r"Document excerpts:\s*(.+?)(?:\n\n|$)", prompt, re.S)
+        if match:
+            excerpt = re.split(r"(?<=[.!?])\s+", match.group(1).strip())[0]
+        return f"MOCK_RESPONSE: {excerpt}".strip()
 
-
+    def warmup(self) -> None:
+        return None
 
 
 # Singleton instance

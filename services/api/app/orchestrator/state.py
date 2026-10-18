@@ -1,13 +1,19 @@
-from typing import TypedDict, List, Optional, Dict, Any
-from pydantic import BaseModel, Field
+from typing import List, Optional, TypedDict
+
+from pydantic import BaseModel
+
 
 class AnalysisResult(BaseModel):
     category: str
     findings: List[str]
     evidence: List[str]
     risk_level: str = "low"
+    grounded: bool = False
+    status: str = "ok"  # ok | ungrounded | blocked | error
+    elapsed_ms: int = 0
 
-class GraphState(TypedDict):
+
+class GraphState(TypedDict, total=False):
     """State shared across the LangGraph nodes."""
     doc_id: str
     user_query: str

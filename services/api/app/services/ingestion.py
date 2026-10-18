@@ -1,7 +1,11 @@
+import logging
 import os
-from typing import List, Dict
+
 import PyPDF2
-from services.api.app.config.settings import settings
+
+logger = logging.getLogger(__name__)
+
+SUPPORTED_EXTENSIONS = (".pdf", ".txt")
 
 class IngestionService:
     """Handles local extraction of text from legal documents."""
@@ -10,27 +14,26 @@ class IngestionService:
         """Extracts text from PDF or TXT files locally."""
         ext = os.path.splitext(file_path)[1].lower()
 
+        if ext not in SUPPORTED_EXTENSIONS:
+            raise ValueError(f"Unsupported file extension: {ext}. Only .pdf and .txt are allowed.")
         if ext == '.pdf':
             return self._extract_pdf(file_path)
-        elif ext == '.txt':
-            return self._extract_txt(file_path)
-        else:
-            raise ValueError(f"Unsupported file extension: {ext}. Only .pdf and .txt are allowed.")
+        return self._extract_txt(file_path)
 
     def _extract_pdf(self, file_path: str) -> str:
-        text = ""
+        pages = []
         try:
             with open(file_path, 'rb') as f:
                 reader = PyPDF2.PdfReader(f)
                 for page in reader.pages:
                     page_text = page.extract_text()
                     if page_text:
-                        text += page_text + "\n"
+                        pages.append(page_text)
         except Exception as e:
             # Log only the error, not the file path if it contains sensitive info
-            print(f"Error extracting PDF: {str(e)}")
+            logger.error("Error extracting PDF: %s", e)
             raise
-        return text.strip()
+        return "\n".join(pages).strip()
 
     def _extract_txt(self, file_path: str) -> str:
         try:
