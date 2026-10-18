@@ -1,4 +1,5 @@
 import json
+import threading
 import time
 import unittest
 
@@ -85,6 +86,8 @@ class TestParallelAnalysis(unittest.TestCase):
                 return super().generate(prompt, system)
 
         nodes_module.inference_client = SlowMock()
+        nodes_module.model_slots = threading.BoundedSemaphore(4)
+        self.addCleanup(setattr, nodes_module, "model_slots", threading.BoundedSemaphore(1))
         with open("parallel.txt", "w") as f:
             f.write(LEASE.decode())
 
@@ -95,6 +98,50 @@ class TestParallelAnalysis(unittest.TestCase):
         self.assertTrue(result["is_legal_doc"])
         # Sequential execution would take >= 4 * delay.
         self.assertLess(elapsed, 3 * delay)
+
+
+class TestModelSlots(unittest.TestCase):
+    def setUp(self):
+        self._slots = nodes_module.model_slots
+        self.addCleanup(setattr, nodes_module, "model_slots", self._slots)
+        self.addCleanup(setattr, nodes_module, "inference_client", MockInferenceClient())
+
+    def test_single_slot_serializes_model_calls(self):
+        active, peak, lock = [0], [0], threading.Lock()
+
+        class Tracking(MockInferenceClient):
+            def generate(self, prompt, system=None):
+                with lock:
+                    active[0] += 1
+                    peak[0] = max(peak[0], active[0])
+                time.sleep(0.05)
+                with lock:
+                    active[0] -= 1
+                return super().generate(prompt, system)
+
+        nodes_module.inference_client = Tracking()
+        nodes_module.model_slots = threading.BoundedSemaphore(1)
+        threads = [threading.Thread(target=nodes_module.generate, args=("Document excerpts: a.",)) for _ in range(4)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        self.assertEqual(peak[0], 1)
+
+    def test_cancelled_request_skips_queued_call(self):
+        calls = []
+
+        class Recording(MockInferenceClient):
+            def generate(self, prompt, system=None):
+                calls.append(prompt)
+                return super().generate(prompt, system)
+
+        nodes_module.inference_client = Recording()
+        nodes_module.cancel_request("req-1")
+        with self.assertRaises(nodes_module.AnalysisCancelled):
+            nodes_module.generate("Document excerpts: a.", None, "req-1")
+        nodes_module.generate("Document excerpts: a.", None, "req-2")
+        self.assertEqual(len(calls), 1)
 
 
 if __name__ == "__main__":

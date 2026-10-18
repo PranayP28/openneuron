@@ -1,6 +1,7 @@
+import threading
 import time
 import uuid
-from typing import Tuple
+from typing import Dict, Optional, Tuple
 
 from services.api.app.config.settings import settings
 from services.api.app.observability.manifest import manifest_service
@@ -15,6 +16,7 @@ from services.api.app.prompts.templates import (
     parse_category,
 )
 from services.api.app.services.chunking import chunking_service
+from services.api.app.services.classification import reconcile_category
 from services.api.app.services.inference import InferenceError, inference_client
 from services.api.app.services.ingestion import ingestion_service
 from services.api.app.services.retrieval import retrieval_service
@@ -31,6 +33,37 @@ CLASSIFY_SAMPLE_CHARS = 2000
 MAX_EVIDENCE = 3
 
 
+# Caps concurrent model calls so requests queued behind a busy Ollama slot do not time out.
+model_slots = threading.BoundedSemaphore(max(1, settings.LLM_MAX_PARALLEL))
+_cancelled: Dict[str, float] = {}
+_cancelled_lock = threading.Lock()
+CANCEL_TTL_SECONDS = 600
+
+
+class AnalysisCancelled(InferenceError):
+    """Raised when the client went away before a queued model call started."""
+
+
+def cancel_request(request_id: str) -> None:
+    now = time.monotonic()
+    with _cancelled_lock:
+        for rid in [r for r, t in _cancelled.items() if now - t > CANCEL_TTL_SECONDS]:
+            del _cancelled[rid]
+        _cancelled[request_id] = now
+
+
+def is_cancelled(request_id: Optional[str]) -> bool:
+    with _cancelled_lock:
+        return bool(request_id) and request_id in _cancelled
+
+
+def generate(prompt: str, system: Optional[str] = None, request_id: Optional[str] = None) -> str:
+    with model_slots:
+        if is_cancelled(request_id):
+            raise AnalysisCancelled("Request was cancelled.")
+        return inference_client.generate(prompt, system)
+
+
 def _elapsed_ms(start: float) -> int:
     return int((time.perf_counter() - start) * 1000)
 
@@ -39,7 +72,8 @@ def classify_document(doc_id: str, text: str) -> Tuple[str, bool]:
     """Classifies a document with the local model. Returns (category, is_legal)."""
     start = time.perf_counter()
     prompt = get_prompt("classify_label", text=text[:CLASSIFY_SAMPLE_CHARS])
-    category = parse_category(inference_client.generate(prompt, get_system_prompt("classify_label")))
+    model_category = parse_category(generate(prompt, get_system_prompt("classify_label")))
+    category = reconcile_category(model_category, text)
     is_legal = category != NON_LEGAL_CATEGORY
     metrics_service.log_request(str(uuid.uuid4()), doc_id, time.perf_counter() - start, is_legal, category)
     return category, is_legal
@@ -88,7 +122,7 @@ def analysis_node(state: GraphState, analysis_type: str):
     )
 
     try:
-        response = inference_client.generate(prompt, system)
+        response = generate(prompt, system, state.get("request_id"))
     except InferenceError as e:
         result = AnalysisResult(
             category=analysis_type, findings=[str(e)], evidence=[], status="error", elapsed_ms=_elapsed_ms(start)

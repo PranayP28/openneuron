@@ -56,7 +56,7 @@ The system follows a multi-layered approach:
    source venv/bin/activate
    python services/api/main.py
    ```
-   Optional, for lower latency: start Ollama with `OLLAMA_NUM_PARALLEL=4 ollama serve` so the four analyses run concurrently on the model too.
+   Optional, for lower latency: start Ollama with `OLLAMA_NUM_PARALLEL=4 ollama serve` and set `LLM_MAX_PARALLEL=4` in `.env` so the four analyses run concurrently on the model too. The default (`LLM_MAX_PARALLEL=1`) queues model calls in the API so they don't time out behind a single Ollama slot.
 4. **Start Frontend**:
    ```bash
    cd apps/app

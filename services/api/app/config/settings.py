@@ -28,6 +28,8 @@ class Settings(BaseSettings):
     LLM_MAX_TOKENS: int = 400
     LLM_KEEP_ALIVE: str = "30m"
     LLM_TIMEOUT_SECONDS: float = 120.0
+    # Concurrent model calls; match OLLAMA_NUM_PARALLEL so queued calls do not hit the timeout.
+    LLM_MAX_PARALLEL: int = 1
     WARMUP_ON_STARTUP: bool = True
 
     # RAG Config
