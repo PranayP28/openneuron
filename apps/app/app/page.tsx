@@ -33,6 +33,8 @@ type Message =
       error?: string;
     };
 
+const HEALTH_POLL_MS = 10_000;
+
 const newId = () => Math.random().toString(36).slice(2);
 
 export default function ChatPage() {
@@ -48,10 +50,16 @@ export default function ChatPage() {
 
   useEffect(() => {
     const controller = new AbortController();
-    checkHealth(controller.signal).then((h) => {
-      if (!controller.signal.aborted) setBackend(h ? { online: true, model: h.model } : { online: false });
-    });
-    return () => controller.abort();
+    const poll = () =>
+      checkHealth(controller.signal).then((h) => {
+        if (!controller.signal.aborted) setBackend(h ? { online: true, model: h.model } : { online: false });
+      });
+    poll();
+    const timer = setInterval(poll, HEALTH_POLL_MS);
+    return () => {
+      clearInterval(timer);
+      controller.abort();
+    };
   }, []);
 
   useEffect(() => {

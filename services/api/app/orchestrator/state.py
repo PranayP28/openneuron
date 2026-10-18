@@ -16,6 +16,7 @@ class AnalysisResult(BaseModel):
 class GraphState(TypedDict, total=False):
     """State shared across the LangGraph nodes."""
     doc_id: str
+    request_id: str
     user_query: str
     full_text: str
     chunks: List[str]

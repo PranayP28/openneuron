@@ -132,9 +132,10 @@ def _get_document(doc_id: str) -> DocumentRecord:
     raise HTTPException(status_code=404, detail="Document not found. Please upload it again.")
 
 
-def _graph_inputs(record: DocumentRecord, query: str) -> dict:
+def _graph_inputs(record: DocumentRecord, query: str, request_id: Optional[str] = None) -> dict:
     return {
         "doc_id": record.doc_id,
+        "request_id": request_id or str(uuid.uuid4()),
         "user_query": query,
         "full_text": record.full_text,
         "chunks": record.chunks,
@@ -234,8 +235,10 @@ def chat_stream(doc_id: str = Form(...), query: str = Form(...)):
             return
         yield _ndjson({"type": "status", "stage": "retrieving"})
         final_response: Optional[str] = None
+        request_id = str(uuid.uuid4())
+        completed = False
         try:
-            for update in legal_graph.stream(_graph_inputs(record, query), stream_mode="updates"):
+            for update in legal_graph.stream(_graph_inputs(record, query, request_id), stream_mode="updates"):
                 for node_name, values in update.items():
                     if not values:
                         continue
@@ -246,10 +249,15 @@ def chat_stream(doc_id: str = Form(...), query: str = Form(...)):
                             yield _ndjson({"type": "section", "section": _section(values[f"{t}_analysis"])})
                     if values.get("final_response"):
                         final_response = values["final_response"]
+            completed = True
         except Exception as e:
             logger.exception("Chat stream failed")
             yield _ndjson({"type": "error", "message": f"Analysis failed: {e}"})
             return
+        finally:
+            # Client disconnected (e.g. pressed Stop): skip model calls still waiting for a slot.
+            if not completed:
+                nodes.cancel_request(request_id)
         yield _ndjson({
             "type": "final",
             "response": final_response or "No analysis could be generated.",

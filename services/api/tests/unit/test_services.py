@@ -3,6 +3,7 @@ import unittest
 from services.api.app.orchestrator.policy import SafetyService
 from services.api.app.prompts.templates import get_prompt, parse_category
 from services.api.app.services.chunking import ChunkingService
+from services.api.app.services.classification import reconcile_category
 from services.api.app.services.verification import VerificationService
 
 
@@ -53,6 +54,26 @@ class TestSafetyAndPrompts(unittest.TestCase):
         prompt = get_prompt("risk_detection", question="Can they evict me?", text="ctx")
         self.assertIn("Can they evict me?", prompt)
         self.assertIn("Examples:", prompt)
+
+
+class TestClassification(unittest.TestCase):
+    LEASE = (
+        "RESIDENTIAL LEASE. The Landlord leases the premises to the Tenant for 12 months. "
+        "Rent is $1,200 per month. A security deposit of $1,200 is due at signing. "
+        "Either party may terminate with 60 days written notice."
+    )
+    RECIPE = "Banana smoothie: blend two bananas, a cup of milk and honey for one minute. Serve cold."
+
+    def test_lease_overrides_wrong_model_label(self):
+        self.assertEqual(reconcile_category("legal_notice", self.LEASE), "rental")
+
+    def test_non_legal_text_is_blocked_even_if_model_says_legal(self):
+        self.assertEqual(reconcile_category("service_agreement", self.RECIPE), "non_legal")
+
+    def test_model_label_kept_when_keywords_agree_or_are_weak(self):
+        self.assertEqual(reconcile_category("rental", self.LEASE), "rental")
+        nda = "This Agreement is between the parties. Each party shall keep information confidential."
+        self.assertEqual(reconcile_category("other_legal", nda), "other_legal")
 
 
 if __name__ == "__main__":
