@@ -15,8 +15,8 @@ The system follows a multi-layered approach:
 ## 📝 Step-by-Step Implementation Procedure
 
 ### Phase 1: Foundation & Setup
-- **Monorepo Initialization**: Set up the project structure with separate `apps/web` and `services/api`.
-- **Environment Configuration**: Created `scripts/setup.sh` to handle the installation of Ollama, Python dependencies, and the Gemma model.
+- **Monorepo Initialization**: Set up the project structure with separate `apps/app` and `services/api`.
+- **Environment Configuration**: Created `scripts/setup.sh` to handle the installation of Ollama, Python dependencies (`services/api/requirements.txt`), and the Gemma model (`gemma3:4b` by default, override with `OLLAMA_MODEL`).
 - **Strict Privacy Settings**: Configured the system to bind to `127.0.0.1` and disabled all cloud telemetry (`NEXT_TELEMETRY_DISABLED=1`).
 - **Config Management**: Implemented a Pydantic-based settings system for reproducibility (Fixed seed, Temp 0).
 
@@ -39,7 +39,7 @@ The system follows a multi-layered approach:
 - **Local Observability**: Added SQLite metrics for performance tracking and JSON manifests for auditability.
 
 ### Phase 5: Frontend Integration
-- **API Development**: Created FastAPI endpoints for `/upload` and `/chat`.
+- **API Development**: Created FastAPI endpoints for `/upload`, `/chat` and `/chat/stream` (NDJSON; streams each analysis section as soon as it is ready).
 - **UI Development**: Built a Next.js chat interface with Tailwind CSS.
 - **Privacy Polish**: Removed all external CDNs and Google Fonts, using system-native fonts only.
 
@@ -48,23 +48,24 @@ The system follows a multi-layered approach:
 1. **Install Ollama**: Download from ollama.com.
 2. **Run Setup**:
    ```bash
-   cd zeroday_ps2
    chmod +x scripts/setup.sh
    ./scripts/setup.sh
    ```
-3. **Start Backend**:
+3. **Start Backend** (from the repo root):
    ```bash
    source venv/bin/activate
-   export PYTHONPATH=$PYTHONPATH:$(pwd)/zeroday_ps2
    python services/api/main.py
    ```
+   Optional, for lower latency: start Ollama with `OLLAMA_NUM_PARALLEL=4 ollama serve` so the four analyses run concurrently on the model too.
 4. **Start Frontend**:
    ```bash
-   cd apps/web
+   cd apps/app
    npm install
    npm run dev
    ```
-5. **Use**: Upload a PDF/TXT and start asking legal triage questions.
+   Set `NEXT_PUBLIC_API_URL` if the backend is not on `http://127.0.0.1:8000`.
+5. **Run Tests** (from the repo root): `python -m pytest`
+6. **Use**: Upload a PDF/TXT and start asking legal triage questions.
 
 ## 🛡️ Privacy & Compliance Verification
 - [x] All traffic stays on `127.0.0.1`.
